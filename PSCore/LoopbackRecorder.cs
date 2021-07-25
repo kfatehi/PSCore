@@ -4,6 +4,7 @@ using CSCore.SoundIn;
 using CSCore.Codecs.WAV;
 using CSCore.MediaFoundation;
 using CSCore.Streams;
+using CSCore.CoreAudioAPI;
 
 namespace PSCore
 {
@@ -22,6 +23,7 @@ namespace PSCore
         public static WaveWriter waveWriter;
         public static WriterType writerType;
 
+
         public static void StartRecording(String fileName, int bitRate = 192000)
         {
             capture = new WasapiLoopbackCapture();
@@ -29,6 +31,7 @@ namespace PSCore
             capture.Initialize();
 
             wasapiCaptureSource = new SoundInSource(capture);
+
             stereoSource = wasapiCaptureSource.ToStereo();
 
             switch (System.IO.Path.GetExtension(fileName))
@@ -56,13 +59,15 @@ namespace PSCore
                 case WriterType.EncoderWriter:
                     capture.DataAvailable += (s, e) =>
                     {
-                        encoderWriter.Write(e.Data, e.Offset, e.ByteCount);
+                        if (!SilenceBreak())
+                            encoderWriter.Write(e.Data, e.Offset, e.ByteCount);
                     };
                     break;
                 case WriterType.WaveWriter:
                     capture.DataAvailable += (s, e) =>
                     {
-                        waveWriter.Write(e.Data, e.Offset, e.ByteCount);
+                        if (!SilenceBreak())
+                            waveWriter.Write(e.Data, e.Offset, e.ByteCount);
                     };
                     break;
             }
@@ -91,6 +96,49 @@ namespace PSCore
             stereoSource.Dispose();
             wasapiCaptureSource.Dispose();
             capture.Dispose();
+        }
+
+        public static bool recordedNonSilenceYet = false;
+        public static int silentStopTimeout = 1500;
+        public static long timeOfLastNonSilentLevel;
+
+        private static bool SilenceBreak()
+        {
+            // Get the peak meter value. 
+            float level = AudioMeterInformation.FromDevice(capture.Device).PeakValue;
+            Console.WriteLine(level.ToString());
+            // Have we recorded anything yet?
+            if (recordedNonSilenceYet == false)
+            {
+                // No we haven't. So we're going to be patient until we do.
+                // If level is > 0, then yeah, we have.
+                if (level > 0)
+                    recordedNonSilenceYet = true;
+            } else
+            {
+                // Yes, we must have.
+                // Is it silent now?
+                if (level <= 0)
+                {
+                    // How long have we been silent ?
+                    long elapsedTicks = DateTime.Now.Ticks - timeOfLastNonSilentLevel;
+                    TimeSpan elapsedSpan = new TimeSpan(elapsedTicks);
+                    Console.WriteLine(elapsedSpan.TotalMilliseconds);
+                    if (elapsedSpan.TotalMilliseconds >= silentStopTimeout)
+                    {
+                        // That's long enough. Stop Recording.
+                        StopRecording();
+                        Console.WriteLine("Stopped recording. Exiting");
+                        Environment.Exit(0);
+                        return true;
+                    }
+                }
+            }
+            if (level > 0)
+            {
+                timeOfLastNonSilentLevel = DateTime.Now.Ticks;
+            }
+            return false;
         }
     }
 }
